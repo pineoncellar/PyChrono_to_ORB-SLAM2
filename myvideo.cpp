@@ -1,20 +1,16 @@
-// ¸ÃÎÄ¼ş½«´ò¿ª¸ø¶¨µÄÊÓÆµÎÄ¼ş£¬²¢½«Í¼Ïñ´«µİ¸øORB-SLAM2½øĞĞ¶¨Î»
+// è¯¥æ–‡ä»¶å°†æ‰“å¼€ç»™å®šçš„è§†é¢‘æ–‡ä»¶ï¼Œå¹¶å°†å›¾åƒä¼ é€’ç»™ORB-SLAM2è¿›è¡Œå®šä½
 
-// ĞèÒªopencv
+// éœ€è¦opencv
 #include <opencv2/opencv.hpp>
 
-// ORB-SLAMµÄÏµÍ³½Ó¿Ú
-#include "System.h"
-
-// ws¿â
+// wsåº“
 #include "easywsclient.hpp"
 
-/*
-#ifdef _WIN32
 #pragma comment( lib, "ws2_32" )
 #include <WinSock2.h>
-#endif
-*/
+
+// ORB-SLAMçš„ç³»ç»Ÿæ¥å£
+#include "System.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -28,17 +24,27 @@ using namespace cv;
 using easywsclient::WebSocket;
 static WebSocket::pointer ws = NULL;
 
+// è®°å½•ç³»ç»Ÿæ—¶é—´
+auto start = chrono::system_clock::now();
+
+// å‚æ•°æ–‡ä»¶ä¸å­—å…¸æ–‡ä»¶
+string parameterFile = "./myvideo.yaml";
+string vocFile = "./Vocabulary/ORBvoc.txt";
+
+// å£°æ˜ ORB-SLAM3 ç³»ç»Ÿ
+ORB_SLAM3::System SLAM(vocFile, parameterFile, ORB_SLAM3::System::MONOCULAR, true);
+
 
 void handle_message(const std::string& message)
 {
     //printf(">>> %s\n", message.c_str());
     //if (message == "world") { ws->close(); }
 
-    // ½«½ÓÊÕµ½µÄ×Ö·û´®Êı¾İ×ª»»ÎªOpenCVµÄMat¶ÔÏó
+    // å°†æ¥æ”¶åˆ°çš„å­—ç¬¦ä¸²æ•°æ®è½¬æ¢ä¸ºOpenCVçš„Matå¯¹è±¡
     std::vector<uchar> data(message.begin(), message.end());
     Mat image = imdecode(data, IMREAD_COLOR);
 
-    // ¼ì²éÍ¼ÏñÊÇ·ñ³É¹¦½âÂë
+    // æ£€æŸ¥å›¾åƒæ˜¯å¦æˆåŠŸè§£ç 
     if (image.empty()) {
         std::cerr << "Failed to decode image data" << std::endl;
     }
@@ -47,44 +53,45 @@ void handle_message(const std::string& message)
         std::cout << "get img." << std::endl;
     }
 
+
+    cv::Mat frame;
+    frame = image;   // è¯»å–ç›¸æœºæ•°æ®
+    if (frame.data == nullptr)
+        return;
+
+    // rescale because image is too large
+    cv::Mat frame_resized;
+    cv::resize(frame, frame_resized, cv::Size(640, 480));
+
+    auto now = chrono::system_clock::now();
+    auto timestamp = chrono::duration_cast<chrono::milliseconds>(now - start);
+    SLAM.TrackMonocular(frame_resized, double(timestamp.count()) / 1000.0);
+        cv::waitKey(30);
+
     imshow("Received Image", image);
     waitKey(1);
 }
 
-
-// ²ÎÊıÎÄ¼şÓë×ÖµäÎÄ¼ş
-string parameterFile = "./myvideo.yaml";
-string vocFile = "./Vocabulary/ORBvoc.txt";
-
-// ÊÓÆµÎÄ¼ş£¬ĞŞ¸ÄµÄ»°ĞèÒªºÍÄãµÄÊÓÆµÃû×ÖÒ»Æğ¸Ä
-string videoFile = "./myvideo.mp4";
-
 int main(int argc, char** argv) {
 
-    // ÉùÃ÷ ORB-SLAM3 ÏµÍ³
-    ORB_SLAM3::System SLAM(vocFile, parameterFile, ORB_SLAM3::System::MONOCULAR, true);
+    INT rc;
+    WSADATA wsaData;
 
-    // »ñÈ¡ÊÓÆµÍ¼Ïñ
-    cv::VideoCapture cap(videoFile);    // change to 1 if you want to use USB camera.
-
-    // ¼ÇÂ¼ÏµÍ³Ê±¼ä
-    auto start = chrono::system_clock::now();
-
-    while (1) {
-        cv::Mat frame;
-        cap >> frame;   // ¶ÁÈ¡Ïà»úÊı¾İ
-        if (frame.data == nullptr)
-            break;
-
-        // rescale because image is too large
-        cv::Mat frame_resized;
-        cv::resize(frame, frame_resized, cv::Size(640, 480));
-
-        auto now = chrono::system_clock::now();
-        auto timestamp = chrono::duration_cast<chrono::milliseconds>(now - start);
-        SLAM.TrackMonocular(frame_resized, double(timestamp.count()) / 1000.0);
-        cv::waitKey(30);
+    rc = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (rc) {
+        printf("WSAStartup Failed.\n");
+        return 1;
     }
+
+    static WebSocket::pointer ws = WebSocket::from_url("ws://127.0.0.1:29507");
+    assert(ws);
+    ws->send("{\"action\": \"start video stream\",\"data\" : {}}");
+    while (ws->getReadyState() != WebSocket::CLOSED) {
+        ws->poll();
+        ws->dispatch(handle_message);
+    }
+    delete ws;
+    WSACleanup();
 
     SLAM.Shutdown();
     return 0;
